@@ -95,15 +95,21 @@ def pick_image_url(apod: dict) -> str:
 
 
 def send_to_ntfy(server: str, topic: str, title: str, message: str, attach_url: str) -> None:
-    """ntfy 토픽으로 이미지 첨부 알림 전송. 실패 시 지수 백오프로 재시도."""
-    url = f"{server.rstrip('/')}/{topic}"
-    headers = {
-        "Title": title,
-        "Tags": "milky_way",
-        "Attach": attach_url,
-        "Content-Type": "text/plain; charset=utf-8",
+    """ntfy 토픽으로 이미지 첨부 알림 전송. 실패 시 지수 백오프로 재시도.
+
+    제목/본문에 이모지·한글 등 비-ASCII가 들어가므로, HTTP 헤더(latin-1 제약) 대신
+    UTF-8 JSON 본문으로 발행한다(ntfy 공식 지원 방식, 서버 루트로 POST).
+    """
+    url = server.rstrip("/")
+    payload = {
+        "topic": topic,
+        "title": title,
+        "message": message,
+        "tags": ["milky_way"],
+        "attach": attach_url,
     }
-    data = message.encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    data = json.dumps(payload).encode("utf-8")
 
     last_err: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
