@@ -39,8 +39,16 @@ def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
+# 일시적 오류로 보고 재시도할 HTTP 상태 코드 (그 외 4xx는 즉시 실패)
+RETRYABLE_STATUS = {429, 500, 502, 503, 504}
+
+
 def http_get_json(url: str) -> dict:
-    """GET 요청 후 JSON 파싱. 네트워크 오류 시 지수 백오프로 재시도."""
+    """GET 요청 후 JSON 파싱.
+
+    네트워크 오류·타임아웃·일시적 5xx/429는 지수 백오프로 재시도하고,
+    그 외 4xx(403/401/400 등)는 응답 본문을 출력하고 즉시 실패한다.
+    """
     last_err: Exception | None = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -48,13 +56,28 @@ def http_get_json(url: str) -> dict:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 body = resp.read().decode("utf-8")
             return json.loads(body)
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, ValueError) as err:
+        except urllib.error.HTTPError as err:
+            # NASA(api.data.gov)는 오류 원인을 본문 JSON에 담아 보낸다 → 그대로 노출
+            detail = ""
+            try:
+                detail = err.read().decode("utf-8", "replace").strip()
+            except Exception:  # noqa: BLE001 - 본문 읽기 실패는 무시
+                pass
+            log(f"[경고] NASA API HTTP {err.code} 응답: {detail or '(본문 없음)'}")
+            if err.code not in RETRYABLE_STATUS:
+                # 키 오류 등은 재시도해도 동일하므로 즉시 중단
+                raise RuntimeError(
+                    f"NASA API가 HTTP {err.code}를 반환했습니다 (재시도 불가). 응답: {detail or '(본문 없음)'}"
+                ) from err
             last_err = err
-            wait = RETRY_BACKOFF_BASE ** attempt
+        except (urllib.error.URLError, TimeoutError, ValueError) as err:
+            last_err = err
             log(f"[경고] NASA API 호출 실패 (시도 {attempt}/{MAX_RETRIES}): {err}")
-            if attempt < MAX_RETRIES:
-                log(f"       {wait}초 후 재시도...")
-                time.sleep(wait)
+
+        wait = RETRY_BACKOFF_BASE ** attempt
+        if attempt < MAX_RETRIES:
+            log(f"       {wait}초 후 재시도...")
+            time.sleep(wait)
     raise RuntimeError(f"NASA API 호출이 {MAX_RETRIES}회 모두 실패했습니다: {last_err}")
 
 
