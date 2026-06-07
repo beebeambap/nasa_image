@@ -1,0 +1,47 @@
+name: NASA APOD Wallpaper Update
+
+on:
+  schedule:
+    # 매일 UTC 00:00 (KST 09:00). cron 문법: https://crontab.guru
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "조회할 APOD 날짜 (YYYY-MM-DD, 비우면 오늘)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nasa-apod-wallpaper
+  cancel-in-progress: false
+
+jobs:
+  update-wallpaper:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Fetch NASA APOD and notify via ntfy
+        env:
+          NASA_API_KEY: ${{ secrets.NASA_API_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          APOD_DATE: ${{ github.event.inputs.date }}
+        run: |
+          set +e
+          python3 scripts/nasa_apod.py
+          code=$?
+          # 종료 코드 2 = 영상 타입이라 스킵 (실패 아님)
+          if [ "$code" -eq 2 ]; then
+            echo "::notice::오늘 APOD는 영상 타입이라 배경화면 전송을 건너뛰었습니다."
+            exit 0
+          fi
+          exit $code
